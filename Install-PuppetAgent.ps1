@@ -11,72 +11,71 @@
 
 # Parameters
 param (
-    [Parameter(
-        HelpMessage="What is this parameter?",
-        Position=0,
-        Mandatory=$true
-     )]
-        [String]$Role
+  [Parameter(
+    HelpMessage="What is this parameter?",
+    Position=0,
+    Mandatory=$true
+  )]
+    [String]$Role
 )
 
-$_hostname = hostname
-$_msiexecPath = "C:\Windows\System32\msiexec.exe"
-$_args = '/qn /i'
-$_path = <PATH_TO_INSTALL>
-$_agent = <INSTALLATION_FILE>
-$_pptServer = 'PUPPET_MASTER_SERVER=<PUPPET_MASTER>'
-$_env = 'production'
-$_pptEnv = "ENVIRONMENT=$_env"
-$_logPath = <PATH_TO_INSTALLATION_LOG>
-$_logClassPath = <PATH_TO_CLASSIFICATION_LOG>
-$_factsPath = "C:\ProgramData\PuppetLabs\facter\facts.d"
-$_puppetPath = "C:\Program Files\Puppet Labs\Puppet\bin"
-$_agentArgs = "agent --test --waitforcert 10 --onetime"
+$hostname = hostname
+$msiexecPath = "C:\Windows\System32\msiexec.exe"
+$args = '/qn /i'
+$path = <PATH_TO_INSTALL>
+$agent = <INSTALLATION_FILE>
+$pptServer = 'PUPPET_MASTER_SERVER=<PUPPET_MASTER>'
+$env = 'production'
+$pptEnv = "ENVIRONMENT=$env"
+$logPath = <PATH_TO_INSTALLATION_LOG>
+$logClassPath = <PATH_TO_CLASSIFICATION_LOG>
+$factsPath = "C:\ProgramData\PuppetLabs\facter\facts.d"
+$puppetPath = "C:\Program Files\Puppet Labs\Puppet\bin"
+$agentArgs = "agent --test --waitforcert 10"
 $webclient = new-object System.Net.WebClient
 
 ## Helper functions ##
 # Returns current date/time for logging
 # Format = YYYY-MM-DDThh:mm:ss (ISO 8601)
 function Get-CurrentTimestamp {
-  $_timestamp = Get-Date -UFormat "%Y-%m-%dT%T"
-  return $_timestamp
+  $timestamp = Get-Date -UFormat "%Y-%m-%dT%T"
+  return $timestamp
 }
 
 # Logs success to _logPath
 function Log-Success {
-  Write-Output "$(Get-CurrentTimestamp) - ${_hostname} - $_agent Installed" | Out-File -FilePath $_logPath -Encoding "UTF8" -Append
+  Write-Output "$(Get-CurrentTimestamp) - ${hostname} - $agent Installed" | Out-File -FilePath $logPath -Encoding "UTF8" -Append
 }
 
-# Logs failure to _logPath
+# Logs failure to logPath
 function Log-Failure {
-
   param (
-      [Parameter(
-          HelpMessage="What is this parameter?",
-          Position=0,
-          Mandatory=$true
-       )]
-          [String]$ErrorCode,
-      [Parameter(
-          HelpMessage="What is this parameter?",
-          Position=1,
-          Mandatory=$true
-       )]
-          [String]$Description
+    [Parameter(
+      HelpMessage="What is this parameter?",
+      Position=0,
+      Mandatory=$true
+      )]
+      [String]$ErrorCode,
+    [Parameter(
+      HelpMessage="What is this parameter?",
+      Position=1,
+      Mandatory=$true
+      )]
+      [String]$Description
   )
 
-  Write-Output "$(Get-CurrentTimestamp) - ${_hostname} - $ErrorCode : $Description" | Out-File -FilePath $_logPath -Encoding "UTF8" -Append
+  Write-Output "$(Get-CurrentTimestamp) - ${hostname} - $ErrorCode : $Description" | Out-File -FilePath $logPath -Encoding "UTF8" -Append
 }
 
 function Log-Classification {
-  Write-Output "$(Get-CurrentTimestamp) - ${_hostname} - $_agent classified with role $Role" | Out-File -FilePath $_logClassPath -Encoding "UTF8" -Append
+  Write-Output "$(Get-CurrentTimestamp) - ${hostname} - $agent classified with role $Role" | Out-File -FilePath $logClassPath -Encoding "UTF8" -Append
 }
 
 ## END Helper functions ##
 
 function Install-PuppetAgent {
   Try {
-    Start-Process -FilePath $_msiexecPath -ArgumentList "$_args $_path\$_agent $_pptServer $_pptEnv" -Wait -ErrorAction Stop
+    Start-Process -FilePath $msiexecPath -ArgumentList "$args $path\$agent $pptServer $pptEnv" -Wait -ErrorAction Stop
 
     if (Get-Service puppet) {
       Log-Success
@@ -92,27 +91,27 @@ function Install-PuppetAgent {
   }
 }
 
-# TODO: Change below to create custom fact based on passed in param instead of matching case statement (future)
+# TODO: Change below to create custom fact based on passed in param instead of matching case statement
 function Create-CustomFacts {
   Switch ($Role) {
     "web" {
-      @{"custom.role"="iis"} | ConvertTo-Json | Out-File -Encoding "OEM" -FilePath $_factsPath\facts.json
+      @{"custom.role"="iis"} | ConvertTo-Json | Out-File -Encoding "OEM" -FilePath $factsPath\facts.json
     }
     "database" {
-      @{"custom.role"="mssql"} | ConvertTo-Json | Out-File -Encoding "OEM" -FilePath $_factsPath\facts.json
+      @{"custom.role"="mssql"} | ConvertTo-Json | Out-File -Encoding "OEM" -FilePath $factsPath\facts.json
     }
     "application" {
-      @{"custom.role"="base"} | ConvertTo-Json | Out-File -Encoding "OEM" -FilePath $_factsPath\facts.json
+      @{"custom.role"="base"} | ConvertTo-Json | Out-File -Encoding "OEM" -FilePath $factsPath\facts.json
     }
     Default {
-      @{"custom.role"="base"} | ConvertTo-Json | Out-File -Encoding "OEM" -FilePath $_factsPath\facts.json
+      @{"custom.role"="base"} | ConvertTo-Json | Out-File -Encoding "OEM" -FilePath $factsPath\facts.json
     }
   }
 }
 
 function Request-CertSign {
-  if (Test-Path $_factsPath\facts.json) {
-    Start-Process -FilePath $_puppetPath\puppet -ArgumentList "$_agentArgs" -Wait -ErrorAction Stop
+  if (Test-Path $factsPath\facts.json) {
+    Start-Process -FilePath $puppetPath\puppet -ArgumentList "$agentArgs" -Wait -ErrorAction Stop
   } else {
     Log-Failure -ErrorCode 'Error 14' -Description 'Custom fact not found.  Unable to classify node.'
     Exit 14
