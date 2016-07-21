@@ -5,34 +5,28 @@
 # Cert signing handled via orchestration outside this scripts
 # Basic logging to a shared location
 # Error codes are custom NOT related to puppet install
-#
-# Author: Brian Snyder
 ################################################################
 
 # Parameters
 param (
   [Parameter(
-    HelpMessage="What is this parameter?",
     Position=0,
     Mandatory=$true
   )]
-    [String]$Role
+    [String]$Role,
+  [Parameter(
+    Position=1,
+    Mandatory=$true,
+  )]
+    [String]$SecEnv
 )
 
 $hostname = hostname
-$msiexecPath = "C:\Windows\System32\msiexec.exe"
-$args = '/qn /i'
-$path = <PATH_TO_INSTALL>
-$agent = <INSTALLATION_FILE>
-$pptServer = 'PUPPET_MASTER_SERVER=<PUPPET_MASTER>'
-$env = 'production'
-$pptEnv = "ENVIRONMENT=$env"
+$url = "https://<puppet_server>:8140/packages/current/install.ps1"
+$pptConfDir = "C:\ProgramData\PuppetLabs\puppet\etc"
 $logPath = <PATH_TO_INSTALLATION_LOG>
 $logClassPath = <PATH_TO_CLASSIFICATION_LOG>
-$factsPath = "C:\ProgramData\PuppetLabs\facter\facts.d"
 $puppetPath = "C:\Program Files\Puppet Labs\Puppet\bin"
-$agentArgs = "agent --test --waitforcert 10"
-$webclient = new-object System.Net.WebClient
 
 ## Helper functions ##
 # Returns current date/time for logging
@@ -42,7 +36,7 @@ function Get-CurrentTimestamp {
   return $timestamp
 }
 
-# Logs success to _logPath
+# Logs success to logPath
 function Log-Success {
   Write-Output "$(Get-CurrentTimestamp) - ${hostname} - $agent Installed" | Out-File -FilePath $logPath -Encoding "UTF8" -Append
 }
@@ -51,13 +45,11 @@ function Log-Success {
 function Log-Failure {
   param (
     [Parameter(
-      HelpMessage="What is this parameter?",
       Position=0,
       Mandatory=$true
       )]
       [String]$ErrorCode,
     [Parameter(
-      HelpMessage="What is this parameter?",
       Position=1,
       Mandatory=$true
       )]
@@ -83,43 +75,64 @@ function Install-PuppetAgent {
       Log-Failure -ErrorCode 'Error 13' -Description 'Puppet service not found.'
       Exit 13
     }
-
   }
+
   Catch {
     Log-Failure -ErrorCode 'Error 12' -Description 'Puppet agent install FAILED.'
     Exit 12
   }
 }
 
-# TODO: Change below to create custom fact based on passed in param instead of matching case statement
 function Create-CustomFacts {
-  Switch ($Role) {
-    "web" {
-      @{"custom.role"="iis"} | ConvertTo-Json | Out-File -Encoding "OEM" -FilePath $factsPath\facts.json
-    }
-    "database" {
-      @{"custom.role"="mssql"} | ConvertTo-Json | Out-File -Encoding "OEM" -FilePath $factsPath\facts.json
-    }
-    "application" {
-      @{"custom.role"="base"} | ConvertTo-Json | Out-File -Encoding "OEM" -FilePath $factsPath\facts.json
-    }
-    Default {
-      @{"custom.role"="base"} | ConvertTo-Json | Out-File -Encoding "OEM" -FilePath $factsPath\facts.json
-    }
-  }
-}
 
-function Request-CertSign {
-  if (Test-Path $factsPath\facts.json) {
-    Start-Process -FilePath $puppetPath\puppet -ArgumentList "$agentArgs" -Wait -ErrorAction Stop
+  if !(Test-Path $pptConfDir) {
+    mkdir $pptConfDir
   } else {
-    Log-Failure -ErrorCode 'Error 14' -Description 'Custom fact not found.  Unable to classify node.'
+    Write-Debug "Puppet Conf Dir already exists. Continuing ..."
+  }
+
+  Switch ($Role) {
+    "web" { $pp_role = 'iis' }
+    "database" { $pp_role = 'mssql' }
+    "application" { $pp_role = 'base' }
+    Default { $pp_role = 'base' }
+  }
+
+  Try {
+    $yaml = "---
+    extension_requests:
+      pp_role: $pp_role
+      pp_securitypolicy: $SecEnv"
+
+    $yaml | Out-File -Encoding "OEM" -FilePath $pptConfDir\csr_attributes.yaml
+  }
+
+  Catch {
+    Log-Failure -ErrorCode 'Error 14' -Description 'Creating trusted facts FAILED.'
     Exit 14
   }
 }
 
-Install-PuppetAgent
+function Install-PuppetAgent {
+  if (Test-Path $pptConfDir\csr_attributes.yaml) {
+
+    Try {
+      [Net.ServicePointManager]::ServerCertificateValidationCallback = {$true}
+      $webClient = New-Object System.Net.WebClient
+      $webClient.DownloadFile("$url", "$env:temp\install-agent.ps1"); & "$env:temp\install-agent.ps1"
+    }
+
+    Catch {
+      Log-Failure -ErrorCode 'Error 12' -Description 'Puppet agent install FAILED.'
+      Exit 12
+    }
+
+  } else {
+    Log-Failure -ErrorCode 'Error 14' -Description 'Trusted Facts do not exist.  FAILED.'
+    Exit 13
+  }
+}
+
 Create-CustomFacts
-Sleep 30 # workaround for race condition described in PUP-2958
-Request-CertSign
+Install-PuppetAgent
 Log-Classification
